@@ -1,55 +1,51 @@
-// Copyright 2018 Zhang Li <StarsunYzL@gmail.com>.
+// Copyright 2018-2019 Zhang Li <StarsunYzL@gmail.com>.
 // 
-// This program is free software : you can redistribute it and/or modify
+// This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 // 
 // This program is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.See the
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 // GNU General Public License for more details.
 // 
 // You should have received a copy of the GNU General Public License
-// along with this program.If not, see < https://www.gnu.org/licenses/>.
+// along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-#include <cinttypes>
 #include <cstdio>
 #include <memory>
 #include <string>
+#include <sstream>
 #include <regex>
 #include <windows.h>
 #include "_plugins.h"
 #include "_scriptapi_module.h"
 
-const int kPluginVersion = 0x000001;
+const uint8_t kMajorVersion = 1;
+const uint8_t kMinorVersion = 0;
+const uint8_t kPatchVersion = 0;
+const uint32_t kFullVersion = (kMajorVersion << 16) | (kMinorVersion << 8) | kPatchVersion;
 
 enum MenuEntry {
   kMenuLoadMapFile,
   kMenuAbout
 };
 
-#define _U8(PRI) u8##PRI
-#define U8(PRI) _U8(PRI)
-
 #ifndef _WIN64
-using useg = uint16_t;
-using uoff = uint32_t;
+using segment_t = uint16_t;
+using offset_t = uint32_t;
+#define PRI0XPTR "08X"
 #else
-using useg = uint32_t;
-using uoff = uint64_t;
+using segment_t = uint32_t;
+using offset_t = uint64_t;
+#define PRI0XPTR "016llX"
 #endif
-
-struct MapInfo {
-  useg segment;
-  uoff offset;
-  std::string name;
-};
 
 HWND g_dlg_handle = nullptr;
 int g_menu_handle = 0;
 
-bool ApplyName(useg segment, uoff offset, const std::string& name, void* userdata) {
+bool ApplyName(segment_t segment, offset_t offset, const std::string& name, void* userdata) {
   BridgeList<Script::Module::ModuleSectionInfo>* section_list = reinterpret_cast<BridgeList<Script::Module::ModuleSectionInfo>*>(userdata);
   if (static_cast<int>(segment) > section_list->Count() || offset > (*section_list)[segment - 1].size)
     return false;
@@ -63,7 +59,7 @@ unsigned int ParseMapFile(const wchar_t* path, ParseCallback callback, void* use
   unsigned int applied = 0;
   FILE* file = nullptr;
   if (_wfopen_s(&file, path, L"r")) {
-    _plugin_logprintf(u8"[MapLdr] Could not open map file.\n");
+    _plugin_logprintf("[MapLdr] Could not open map file.\n");
     return applied;
   }
 
@@ -76,19 +72,19 @@ unsigned int ParseMapFile(const wchar_t* path, ParseCallback callback, void* use
   std::regex regex_name(R"(^\s*([0-9a-fA-F]{4,8}):([0-9a-fA-F]{8,16})\s+([[:print:]]+?)\s*$)");
   std::cmatch match;
 
-  bool found = false;
+  bool found_header = false;
   std::shared_ptr<char[]> buf(new char[1024]);
   while (fgets(buf.get(), 1024, file_sp.get())) {
-    if (!found) {
+    if (!found_header) {
       if (std::regex_match(buf.get(), regex_header))
-        found = true;
+        found_header = true;
     } else {
       if (std::regex_match(buf.get(), match, regex_name)) {
-        if (callback(static_cast<useg>(strtoul(match[1].str().c_str(), nullptr, 16)),
+        if (callback(static_cast<segment_t>(strtoul(match[1].str().c_str(), nullptr, 16)),
 #ifndef _WIN64
-          static_cast<uoff>(strtoul(match[2].str().c_str(), nullptr, 16)),
+          static_cast<offset_t>(strtoul(match[2].str().c_str(), nullptr, 16)),
 #else
-          static_cast<uoff>(strtoull(match[2].str().c_str(), nullptr, 16)),
+          static_cast<offset_t>(strtoull(match[2].str().c_str(), nullptr, 16)),
 #endif
           match[3].str(), userdata))
           ++applied;
@@ -100,7 +96,7 @@ unsigned int ParseMapFile(const wchar_t* path, ParseCallback callback, void* use
 
 void LoadMapFile() {
   if (!DbgIsDebugging()) {
-    _plugin_logprintf(u8"[MapLdr] The debugger is not running.\n");
+    _plugin_logprintf("[MapLdr] The debugger is not running.\n");
     return;
   }
 
@@ -109,7 +105,7 @@ void LoadMapFile() {
   memset(&ofn, 0, sizeof(ofn));
   ofn.lStructSize = sizeof(ofn);
   ofn.hwndOwner = g_dlg_handle;
-  ofn.lpstrFilter = L"Map Files\0*.map\0All Files\0*.*\0";
+  ofn.lpstrFilter = L"Map Files (*.map)\0*.map\0All Files (*.*)\0*.*\0";
   ofn.lpstrFile = path;
   ofn.nMaxFile = sizeof(path) / sizeof(path[0]);
   ofn.Flags = OFN_FILEMUSTEXIST;
@@ -118,49 +114,39 @@ void LoadMapFile() {
 
   SELECTIONDATA selection;
   if (!GuiSelectionGet(GUI_DISASSEMBLY, &selection)) {
-    _plugin_logprintf(u8"[MapLdr] Could not get current module.\n");
+    _plugin_logprintf("[MapLdr] Could not get current module.\n");
     return;
   }
 
-  char name[MAX_MODULE_SIZE] = {u8'\0'};
+  char name[MAX_MODULE_SIZE] = {'\0'};
   DbgFunctions()->ModNameFromAddr(selection.start, name, true);
   duint base = DbgFunctions()->ModBaseFromAddr(selection.start);
-#ifndef _WIN64
-  _plugin_logprintf(u8"[MapLdr] %08" U8(PRIXPTR) u8" %s\n", base, name);
-#else
-  _plugin_logprintf(u8"[MapLdr] %016" U8(PRIXPTR) u8" %s\n", base, name);
-#endif
+  _plugin_logprintf("[MapLdr] %" PRI0XPTR " %s\n", base, name);
 
   BridgeList<Script::Module::ModuleSectionInfo> section_list;
   Script::Module::SectionListFromAddr(base, &section_list);
   if (!section_list.Count()) {
-    _plugin_logprintf(u8"[MapLdr] Could not get sections.\n");
+    _plugin_logprintf("[MapLdr] Could not get sections.\n");
     return;
   }
 
-  for (int i = 0; i != section_list.Count(); ++i) {
-#ifndef _WIN64
-    _plugin_logprintf(u8"[MapLdr]   %08" U8(PRIXPTR) u8" %08" U8(PRIXPTR) u8" %s\n", section_list[i].addr, section_list[i].size, section_list[i].name);
-#else
-    _plugin_logprintf(u8"[MapLdr]   %016" U8(PRIXPTR) u8" %016" U8(PRIXPTR) u8" %s\n", section_list[i].addr, section_list[i].size, section_list[i].name);
-#endif
-  }
+  for (int i = 0; i != section_list.Count(); ++i)
+    _plugin_logprintf("[MapLdr]   %" PRI0XPTR " %" PRI0XPTR " %s\n", section_list[i].addr, section_list[i].size, section_list[i].name);
 
   unsigned int applied = ParseMapFile(path, ApplyName, std::addressof(section_list));
-  _plugin_logprintf(u8"[MapLdr] Applied %u names.\n", applied);
+  _plugin_logprintf("[MapLdr] Applied %u name(s).\n", applied);
 }
 
 void About() {
-  MessageBox(g_dlg_handle, LR"(MapLdr v0.0.1
-
-Zhang Li <StarsunYzL@gmail.com>
-2018-11-14, Shenzhen)", L"About", MB_OK | MB_ICONINFORMATION);
+  std::wstringstream ss;
+  ss << L"MapLdr v" << kMajorVersion << "." << kMinorVersion << "." << kPatchVersion << L"\n\nZhang Li <StarsunYzL@gmail.com>";
+  MessageBox(g_dlg_handle, ss.str().c_str(), L"About", MB_OK | MB_ICONINFORMATION);
 }
 
 extern "C" __declspec(dllexport) bool pluginit(PLUG_INITSTRUCT* init) {
   init->sdkVersion = PLUG_SDKVERSION;
-  init->pluginVersion = kPluginVersion;
-  strcpy_s(init->pluginName, u8"MapLdr");
+  init->pluginVersion = kFullVersion;
+  strcpy_s(init->pluginName, "MapLdr");
   return true;
 }
 
@@ -172,8 +158,8 @@ extern "C" __declspec(dllexport) bool plugstop() {
 extern "C" __declspec(dllexport) void plugsetup(PLUG_SETUPSTRUCT* setup) {
   g_dlg_handle = setup->hwndDlg;
   g_menu_handle = setup->hMenu;
-  _plugin_menuaddentry(setup->hMenu, kMenuLoadMapFile, u8"Load Map File...");
-  _plugin_menuaddentry(setup->hMenu, kMenuAbout, u8"About");
+  _plugin_menuaddentry(setup->hMenu, kMenuLoadMapFile, "Load Map File...");
+  _plugin_menuaddentry(setup->hMenu, kMenuAbout, "About");
 }
 
 extern "C" __declspec(dllexport) void CBMENUENTRY(CBTYPE type, PLUG_CB_MENUENTRY* info) {
