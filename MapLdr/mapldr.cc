@@ -136,7 +136,7 @@ void LoadMapFile() {
 
 void About() {
   std::wstringstream ss;
-  ss << L"MapLdr v" << kMajorVersion << "." << kMinorVersion << "." << kPatchVersion << L"\n\nZhang Li <StarsunYzL@gmail.com>";
+  ss << L"MapLdr v" << kMajorVersion << "." << kMinorVersion << "." << kPatchVersion << L"\n\nZhang Li <starsunyzl@gmail.com>";
   MessageBox(g_dlg_handle, ss.str().c_str(), L"About", MB_OK | MB_ICONINFORMATION);
 }
 
