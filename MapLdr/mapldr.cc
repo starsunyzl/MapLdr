@@ -45,17 +45,14 @@ using offset_t = uint64_t;
 HWND g_dlg_handle = nullptr;
 int g_menu_handle = 0;
 
-bool ApplyName(segment_t segment, offset_t offset, const std::string& name, void* userdata) {
-  BridgeList<Script::Module::ModuleSectionInfo>* section_list = reinterpret_cast<BridgeList<Script::Module::ModuleSectionInfo>*>(userdata);
-  if (static_cast<int>(segment) > section_list->Count() || offset > (*section_list)[segment - 1].size)
+bool ApplyName(segment_t segment, offset_t offset, const std::string& name, const BridgeList<Script::Module::ModuleSectionInfo>& section_list) {
+  if (static_cast<int>(segment) > section_list.Count() || offset > section_list[segment - 1].size)
     return false;
 
-  return DbgSetAutoLabelAt((*section_list)[segment - 1].addr + offset, name.c_str());
+  return DbgSetAutoLabelAt(section_list[segment - 1].addr + offset, name.c_str());
 }
 
-using ParseCallback = decltype(&ApplyName);
-
-unsigned int ParseMapFile(const wchar_t* path, ParseCallback callback, void* userdata) {
+unsigned int ParseMapFile(const wchar_t* path, const BridgeList<Script::Module::ModuleSectionInfo>& section_list) {
   unsigned int applied = 0;
   FILE* file = nullptr;
   if (_wfopen_s(&file, path, L"r")) {
@@ -80,13 +77,13 @@ unsigned int ParseMapFile(const wchar_t* path, ParseCallback callback, void* use
         found_header = true;
     } else {
       if (std::regex_match(buf.get(), match, regex_name)) {
-        if (callback(static_cast<segment_t>(strtoul(match[1].str().c_str(), nullptr, 16)),
+        if (ApplyName(static_cast<segment_t>(strtoul(match[1].str().c_str(), nullptr, 16)),
 #ifndef _WIN64
           static_cast<offset_t>(strtoul(match[2].str().c_str(), nullptr, 16)),
 #else
           static_cast<offset_t>(strtoull(match[2].str().c_str(), nullptr, 16)),
 #endif
-          match[3].str(), userdata))
+          match[3].str(), section_list))
           ++applied;
       }
     }
@@ -133,7 +130,7 @@ void LoadMapFile() {
   for (int i = 0; i != section_list.Count(); ++i)
     _plugin_logprintf("[MapLdr]   %" PRI0XPTR " %" PRI0XPTR " %s\n", section_list[i].addr, section_list[i].size, section_list[i].name);
 
-  unsigned int applied = ParseMapFile(path, ApplyName, std::addressof(section_list));
+  unsigned int applied = ParseMapFile(path, section_list);
   _plugin_logprintf("[MapLdr] Applied %u name(s).\n", applied);
 }
 
